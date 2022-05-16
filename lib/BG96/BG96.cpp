@@ -62,14 +62,19 @@ bool getBG96response(char command[], char exp_response[], char response[], uint3
         DEBUG_STREAM.write(response[count]);
       response[++count] = '\0';
     }
+    else
+    {
+      vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
     if (strcheck(response, exp_response, count))
     {
       resp_OK = true;
       break;
     }
   }
-
-  delay(200);
+  
+  //delay(200);
+  vTaskDelay(200 / portTICK_PERIOD_MS);
   
   while (NBIOT_STREAM.available())
   { 
@@ -91,10 +96,12 @@ bool BG96_turnOn()
   //turn on BG96
   if (BG96_debug_enable)
     DEBUG_STREAM.print("BG96 reset...");
+  
   pinMode(BG96_PWRKEY, OUTPUT);
   digitalWrite(BG96_PWRKEY, HIGH);
   delay(1000);
   digitalWrite(BG96_PWRKEY, LOW);
+
   if (BG96_debug_enable)
     DEBUG_STREAM.println("DONE!");
   
@@ -194,7 +201,7 @@ bool BG96_checkConnectivity()
 
   char exp_response[] = "+CREG:";
   uint8_t flag, start_index = 0;
-  while(1)
+  while(start_index < 256)
   {
     flag = 1;
     for(uint8_t i = 0; i < strlen(exp_response); i++)
@@ -211,6 +218,9 @@ bool BG96_checkConnectivity()
   }
 
   start_index += 9;
+
+  if (start_index > 255)
+    return false;
 
   /*Serial.print("CREG vrednost: ");
   Serial.println(response[start_index]);*/
@@ -370,25 +380,31 @@ bool BG96_CloseSocketUDP()
 
 bool BG96_MQTTconnect(char client_id[], char broker[], int port)
 {
-  char response[32], cmd[256];
+  char response[128], cmd[256];
   //char user[] = "node";
   
   sprintf(cmd, "AT+QMTOPEN=0,\"%s\",%d\r\n", broker, port);
   if (!getBG96response(cmd, "+QMTOPEN: 0,0", response, 5000))
+  {
+    BG96_MQTTdisconnect();
     return false;
+  }
   
   //sprintf(cmd, "AT+QMTCONN=0,\"%s\",\"%s\",\"%s\"\r\n", client_id, user, user);
   sprintf(cmd, "AT+QMTCONN=0,\"%s\"\r\n", client_id);
   
   if (!getBG96response(cmd, "+QMTCONN: 0,0,0", response, 5000))
+  {
+    BG96_MQTTdisconnect();
     return false;
+  }
 
   return true;
 }
 
 bool BG96_MQTTpublish(char *topic_to_pub, uint8_t *payload, uint8_t len)
 {
-  char response[32], topic[128];
+  char response[128], topic[128];
 
   sprintf(topic, "AT+QMTPUB=0,0,0,0,\"%s\",%d\r\n", topic_to_pub, len);
   if (!getBG96response(topic, ">", response, 5000))
@@ -410,7 +426,7 @@ bool BG96_MQTTpublish(char *topic_to_pub, uint8_t *payload, uint8_t len)
 
 bool BG96_MQTTsubscribe(char topic_to_sub[])
 {
-  char response[32], cmd[256];
+  char response[128], cmd[256];
   
   sprintf(cmd, "AT+QMTSUB=0,1,\"%s\",0\r\n", topic_to_sub);
   if (!getBG96response(cmd, "OK", response, 5000))
@@ -434,6 +450,10 @@ void BG96_MQTTcollectData(uint8_t *output, uint16_t *output_len)
         DEBUG_STREAM.write(response[count]);
       response[++count] = '\0';
     }
+    else
+    {
+      vTaskDelay(5 / portTICK_PERIOD_MS);      
+    }
   }
   if (BG96_debug_enable)
     DEBUG_STREAM.print("\r\n");
@@ -442,8 +462,9 @@ void BG96_MQTTcollectData(uint8_t *output, uint16_t *output_len)
   uint16_t start_index = 0;
   uint8_t flag;
 
-  t0 = millis();
-  while((millis() - t0) < 15000)
+  //t0 = millis();
+  //while((millis() - t0) < 15000)
+  while(start_index < 256)
   {
     flag = 1;
     for(uint8_t i = 0; i < strlen(exp_response); i++)
@@ -458,8 +479,11 @@ void BG96_MQTTcollectData(uint8_t *output, uint16_t *output_len)
       break;
     
     start_index++;
+    //if(start_index == 256)
+      //return;
   }
  
+  uint16_t end_response = count;
   count = 0;
   while(count != 3)
   {
@@ -467,6 +491,8 @@ void BG96_MQTTcollectData(uint8_t *output, uint16_t *output_len)
       count++;
     
     start_index++;
+    if (start_index == 256)
+      break;
   }
 
   start_index++;
@@ -495,7 +521,10 @@ bool BG96_OpenSocketTCP(char server_IP[], uint16_t port)
   sprintf(cmd, "AT+QIOPEN=1,0,\"TCP\",\"%s\",%d,0,0\r\n", server_IP, port);
 
   if (!getBG96response(cmd, "+QIOPEN: 0,0", response, 5000))
+  {
+    BG96_CloseSocketTCP();
     return false;
+  }
 
   if (!getBG96response("AT+QISTATE=1,0\r\n", "OK", response, 3000))
     return false;
@@ -545,6 +574,8 @@ bool BG96_RecvTCP(uint8_t *output, uint16_t *output_len)
       break;
 
     start_index++;
+    if(start_index == 256)
+      return false;
   }
 
   uint16_t actual_size = 0;
@@ -555,11 +586,15 @@ bool BG96_RecvTCP(uint8_t *output, uint16_t *output_len)
       char c = response[start_index];
       actual_size = actual_size * 10 + (c - '0');
       start_index++;
+      if(start_index == 256)
+        return false;
   }
 
   while(response[start_index] != 0x0a)
   {
     start_index++;
+    if(start_index == 256)
+      return false;
   }
 
   start_index++;
@@ -584,7 +619,9 @@ bool BG96_CloseSocketTCP()
   if (!getBG96response("AT+QICLOSE=0\r\n", "OK", response, 10000))
   {
     if (!getBG96response("AT+QICLOSE=0\r\n", "OK", response, 10000))
+    {
       return false;
+    }
   }
   return true;
 }

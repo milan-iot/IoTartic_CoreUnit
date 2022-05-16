@@ -64,10 +64,8 @@ uint8_t LDU_parsePacket(LDU_struct *comm_params, uint16_t header, uint8_t *input
 {
     uint16_t rec_header = ((uint16_t) input[0] << 8) | input[1];
 
-    Serial.println(header, HEX);
-    Serial.println(rec_header, HEX);
-    //if (rec_header != header)
-    //    return SERVER_ERROR(INVALID_HEADER);
+    if (rec_header != header)
+        return SERVER_ERROR(INVALID_HEADER);
 
     switch (rec_header)
     {
@@ -84,7 +82,8 @@ uint8_t LDU_parsePacket(LDU_struct *comm_params, uint16_t header, uint8_t *input
         break;
 
         default:
-            Serial.println("default");
+            if (LDU_debug_enable)
+                DEBUG_STREAM.println("Default case");
             return SERVER_ERROR(INVALID_HEADER);
         break;
     }
@@ -111,7 +110,6 @@ uint8_t LDU_parsePacket(LDU_struct *comm_params, uint16_t header, uint8_t *input
         DEBUG_STREAM.println(received_hmac, HEX);
     }
 
-    DEBUG_STREAM.println("ret: " + String(!(crc.getCRC() == received_hmac)));
     return !(crc.getCRC() == received_hmac);
 }
 
@@ -139,13 +137,14 @@ uint8_t LDU_init(LDU_struct *comm_params)
     }
     else if (comm_params->mode == BLE)
     {
-        Serial.println("test ble");
         BLE_serverSetup(comm_params->serv_uuid, comm_params->char_uuid);
     }
     else
     {
         return BAD_COM_STRUCTURE;
     }
+
+    return LDU_OK;
 }
 
 
@@ -243,7 +242,8 @@ uint8_t LDU_waitForData(LDU_struct *comm_params, uint8_t *output_data, uint16_t 
     ret = LDU_parsePacket(comm_params, SENSOR_DATA_VALUE_HEADER, response, response_len, output_data, output_data_len);
     if(ret != LDU_OK)
     {
-        Serial.println("Parse error");
+        if (LDU_debug_enable)
+            DEBUG_STREAM.println("Parse error");
         return ret;
     }
 
@@ -252,7 +252,8 @@ uint8_t LDU_waitForData(LDU_struct *comm_params, uint8_t *output_data, uint16_t 
     ret = LDU_send(comm_params, core_command, 3);
     if(ret != LDU_OK)
     {
-        Serial.println("Send error");
+        if (LDU_debug_enable)
+            DEBUG_STREAM.println("Send error");
         return ret;
     }
 
@@ -314,41 +315,4 @@ uint8_t LDU_requestMAC(LDU_struct *comm_params, uint8_t *sensor_mac, uint16_t *s
 {
     return LDU_request(comm_params, SENSOR_MAC_ADDRESS_REQUEST_HEADER, sensor_mac, sensor_mac_length);
 }
-
-/*
-uint8_t LDU_checkSensorData(LDU_struct *comm_params, uint8_t *sensor_data, uint16_t sensor_data_len)
-{
-    if (comm_params->mode != BLE)
-        return BAD_COM_STRUCTURE;
-
-    uint8_t hmac_result[32];
-    uint16_t hmac_len = 32;
-
-    if (LDU_debug_enable)
-        LDU_debugPrint((int8_t *) "input data", (uint8_t *) sensor_data, sensor_data_len);
-
-    mbedtls_md_context_t ctx;
-    if (!Crypto_Digest(&ctx, HMAC_SHA256, (uint8_t *) sensor_data, sensor_data_len - hmac_len, hmac_result, (uint8_t *) comm_params->ble_password, strlen(comm_params->ble_password)))
-      return CRYPTO_FUNC_ERROR;
-
-    if (LDU_debug_enable)
-        LDU_debugPrint((int8_t *) "hash data received", (uint8_t *) sensor_data + sensor_data_len - hmac_len, hmac_len);
-
-    if (LDU_debug_enable)
-        LDU_debugPrint((int8_t *) "hash data calculated", hmac_result, hmac_len);
-
-    bool hash_valid = true;
-
-    for(uint8_t i= 0; i< sizeof(hmac_result); i++)
-        if(hmac_result[i] != sensor_data[sensor_data_len - sizeof(hmac_result) + i])
-        {
-            hash_valid = false;
-            break;
-        }
-
-    if(hash_valid)
-        return PACKET_OK;
-    else
-        return BLE_INVALID_AUTH;
-}*/
 

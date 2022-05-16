@@ -6,7 +6,6 @@
 #define SERVER_IP "95.179.159.100"
 #define UDP_PORT  2345
 
-//#define MQTT_URL "mqtt.eclipseprojects.io"
 #define MQTT_URL "95.179.159.100"
 
 //#define _TELENOR_SRB
@@ -27,7 +26,6 @@
 void BG96_debugEnable(bool enable);
 bool BG96_turnOn();
 bool BG96_nwkRegister(char *apn, char *apn_user, char *apn_password);
-bool BG96_checkConnectivity();
 bool BG96_TxRxUDP(char payload[], char server_IP[], uint16_t port);
 bool BG96_TxRxSensorData(char server_IP[], uint16_t port, uint8_t payload[], uint8_t len);
 
@@ -40,6 +38,12 @@ bool BG96_setAwsCredential(String crd, String filename);
 void BG96_MQTTconfigureSSL(char ClientID[]);
 
 void BG96_serialBridge();
+
+/**
+ * Function that check if device is connected on network
+ * @return Returns true if connected, false if not
+ */
+bool BG96_checkConnectivity();
 
 // UDP functions
 /**

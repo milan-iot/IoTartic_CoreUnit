@@ -12,12 +12,10 @@
 #include <file_utils.h>
 #include <sdu.h>
 #include <ldu.h>
-#include <test_functions.h>
 #include <json.h>
 #include <RTOS_utils.h>
 
 // packet
-//uint8_t packet[6 + sizeof(sensor_data_hashed)];
 uint8_t packet[128];
 uint16_t packet_len;
 
@@ -30,67 +28,6 @@ SDU_struct server_comm_params;
 LDU_struct local_comm_params;
 char topic_to_subscribe[64];
 uint8_t gateaway_mac[6];
-
-void GPS_test(void)
-{
-  //GPS test
-  char position[64], str[64];
-  RGB_LED_setColor(RED);
-  BG96_turnGpsOn();
-  BG96_getGpsFix();
-  RGB_LED_setColor(GREEN);
-  uint16_t counter = 0;
-  
-  while(1)
-  {
-    if (BG96_getGpsPosition(position))
-    {
-      sprintf(str, "#%d: %s\r\n", ++counter, position);
-      Serial.print(str);
-      return;
-    }
-    else
-      BG96_getGpsFix();
-    delay(3000);
-  }
-}
-
-void GetMacAddress()
-{
-  //https://techtutorialsx.com/2018/03/09/esp32-arduino-getting-the-bluetooth-device-address/
-  btStart();
-  esp_bluedroid_init();
-  esp_bluedroid_enable();
-
-  Serial.print("BLE MAC Address:  ");
-  const uint8_t* point = esp_bt_dev_get_address();
-  for (int i = 0; i < 6; i++)
-  {
-    char str[3];
-   
-    sprintf(str, "%02X", (int)point[i]);
-    Serial.print(str);
-    if (i < 5)
-      Serial.print(":");
-  }
-  Serial.println();
-  
-  String mac = WiFi.macAddress();
-
-  Serial.print("WiFi MAC Address: ");
-  Serial.println(mac);
-
-  for (int i = 0; i < 6; i++)
-  {
-    uint8_t hi, lo;
-    char c = mac.charAt(3 * i);
-    hi = c > '9' ? c - 'A' + 10 : c - '0';
-    c = mac.charAt(3 * i + 1);
-    lo = c > '9' ? c - 'A' + 10 : c - '0';
-    mac_wifi[i] = (hi << 4) | lo;
-    packet[i] = mac_wifi[i];
-  }
-}
 
 void setup()
 {
@@ -128,6 +65,7 @@ void setup()
       RS485_recv(packet, &packet_len);
   }*/
 
+  BG96_debugEnable(false);
 
   // BLE setup
   if (config.local_tunnel == BLE)
@@ -152,6 +90,7 @@ void setup()
   uint8_t ret;
   
   SDU_debugEnable(true);
+
   SDU_init(&server_comm_params, config.comm_mode, config.protocol, config.server_tunnel, (char *) config.ip, config.port, (uint8_t*) gateaway_mac);
   
   if (config.protocol == MQTT)
@@ -202,11 +141,14 @@ void setup()
   sensorCommunicationTaskParams.ldu_s = &local_comm_params;
   sensorCommunicationTaskParams.json_c = &config;
 
+  serverPacket_s serverPacket;
+
   // init RTOS functions
   RTOS_init();
+  //BG96_debugEnable(false);
 
   // create task for core-server communication
-  RTOS_createTask(CORE_SERVER, &serverCommunicationTaskParams, 20000, 1);
+  RTOS_createTask(CORE_SERVER, &serverCommunicationTaskParams, 30000, 1);
 
   // create task for core-sensor communication
   RTOS_createTask(CORE_SENSOR, &sensorCommunicationTaskParams, 6000, 2);
@@ -214,10 +156,10 @@ void setup()
   // create task for core-actuator communication
   RTOS_createTask(CORE_ACTUATOR, NULL, 5000, 3);
 
-  //GPS_test();
+  Serial.println("Init done...");
 }
 
 void loop()
 {
-  delay(100);
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
 }

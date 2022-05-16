@@ -32,7 +32,7 @@ class MyServerCallbacks: public BLEServerCallbacks
       if (BLE_debug_enable)
         DEBUG_STREAM.println("BLE Connected");
       RGB_LED_setColor(BLUE);
-      delay(1000);
+      delay(500);
       RGB_LED_setColor(BLACK);
     };
 
@@ -64,6 +64,7 @@ class MyCallbacks: public BLECharacteristicCallbacks
   {
     if (BLE_debug_enable)
       DEBUG_STREAM.println("BLE Write");
+    
     data_received_flag = true;
     RGB_LED_setColor(RED);
     delay(200);
@@ -140,10 +141,7 @@ void BLE_send(uint8_t *data, uint16_t data_length)
 bool BLE_recv(char *data, uint16_t *size, uint32_t timeout)
 {
   uint32_t t0 = millis();
-  while (!data_received_flag && (millis() - t0) < timeout)
-  {
-    //vTaskDelay(5 / portTICK_PERIOD_MS);  
-  }
+  while (!data_received_flag && (millis() - t0) < timeout);
   vTaskDelay(100 / portTICK_PERIOD_MS);
 
   if(data_received_flag)

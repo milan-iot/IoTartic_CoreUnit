@@ -101,7 +101,6 @@ bool WiFi_TCPrecv(char rx_buffer[], uint16_t *size);
 */
 void WiFi_TCPdisconnect();
 
-
 /**
 * Utility function used to enable/disable debug prints via UART.
 * @param enable - parameter used for enabling debug prints (true-enable, false-disable)

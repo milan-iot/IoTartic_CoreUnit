@@ -89,7 +89,6 @@ void serverCommunicationTask(void *parameter)
         while(SDU_setup((*(serverCommunicationTaskParams_s *)parameter).sdu_s) != SDU_OK)
           vTaskDelay(5000 / portTICK_PERIOD_MS);
 
-    
     if((*(serverCommunicationTaskParams_s *)parameter).json_c->comm_mode == ENCRYPTED_COMM)
     {
       // check if IV should be updated (each day)
@@ -97,9 +96,6 @@ void serverCommunicationTask(void *parameter)
 
       if(day_old != day_new)
       {
-        // save to old value
-        day_old = day_new;
-
         // updating IV
         ret = SDU_updateIV((*(serverCommunicationTaskParams_s *)parameter).sdu_s);
         if (RTOS_debug_enable)
@@ -109,9 +105,13 @@ void serverCommunicationTask(void *parameter)
         ret = SDU_handshake((*(serverCommunicationTaskParams_s *)parameter).sdu_s);
         if (RTOS_debug_enable)
           SDU_debugPrintError(ret);
+        
+        // save to old value
+        if (ret == SDU_OK)
+          day_old = day_new;
       }
     }
-    
+
     // collect data from queue (if not empty)
     if(xQueueReceive(server_sensor_queue, (void *) &serverPacket, (TickType_t)10))
     { 

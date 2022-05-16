@@ -211,7 +211,7 @@ uint8_t SDU_constructPacket(uint8_t *mac, uint16_t header_type, uint8_t *in_data
 
         case DATE_REQUEST_HEADER:
             *out_data_len = MAC_LENGTH + HEADER_LENGTH;
-            return 0x00;
+            return SDU_OK;
         break;
 
         case SENSOR_ENC_DATA_HEADER:
@@ -264,7 +264,7 @@ uint8_t SDU_parsePacket(uint8_t *input, uint16_t input_length, uint8_t *output, 
                 return SERVER_ERROR(INVALID_NUM_OF_BYTES);
             memcpy(output, input + HEADER_LENGTH, ERROR_CODE_LENGTH);
             *output_length = ERROR_CODE_LENGTH;
-            return 0x00;
+            return SDU_OK;
         break;
 
         case DATE_UPDATE_HEADER:
@@ -279,7 +279,7 @@ uint8_t SDU_parsePacket(uint8_t *input, uint16_t input_length, uint8_t *output, 
                 return SERVER_ERROR(INVALID_NUM_OF_BYTES);
             memcpy(output, input + HEADER_LENGTH, SENSOR_RESPONSE_LENGTH);
             *output_length = SENSOR_RESPONSE_LENGTH;
-            return 0x00;
+            return SDU_OK;
         break;
 
         default:
@@ -290,12 +290,6 @@ uint8_t SDU_parsePacket(uint8_t *input, uint16_t input_length, uint8_t *output, 
     CRC8 crc;
     crc.setPolynome(CRC8_DEFAULT_VALUE);
     crc.add((uint8_t*)output, *output_length);
-    
-    if (SDU_debug_enable)
-    {
-        DEBUG_STREAM.println(crc.getCRC(), HEX);
-        DEBUG_STREAM.println(input[*output_length + HEADER_LENGTH], HEX);   
-    }
 
     return checkBytes(crc.getCRC(), input[*output_length + HEADER_LENGTH]);
 }
@@ -464,13 +458,14 @@ uint8_t SDU_updateIV(SDU_struct *comm_params)
     byte shared_secret[32];
     mbedtls_md_context_t ctx;
 
-    Crypto_debugEnable(true);
+    if (SDU_debug_enable)
+        Crypto_debugEnable(true);
     
     if (!Crypto_Digest(&ctx, HMAC_SHA256, (uint8_t *) comm_params->hmac_salt, strlen(comm_params->hmac_salt), shared_secret, (uint8_t *) comm_params->password, strlen(comm_params->password)))
       return CRYPTO_FUNC_ERROR;
 
     ret = SDU_establishConnection(comm_params);
-    if (ret != 0x00)
+    if (ret != SDU_OK)
         return ret;
 
     uint8_t date_request[128];
@@ -490,7 +485,7 @@ uint8_t SDU_updateIV(SDU_struct *comm_params)
         if (!BG96_SendUDP(comm_params->server_IP, comm_params->port, date_request, date_request_len))
         {
             ret = SDU_closeConnection(comm_params);
-            if (ret != 0x00)
+            if (ret != SDU_OK)
                 return ret;
             return BG96_ERROR;
         }
@@ -500,7 +495,7 @@ uint8_t SDU_updateIV(SDU_struct *comm_params)
         if (!BG96_SendTCP(date_request, date_request_len))
         {
             ret = SDU_closeConnection(comm_params);
-            if (ret != 0x00)
+            if (ret != SDU_OK)
                 return ret;
             return BG96_ERROR;
         }
@@ -510,7 +505,7 @@ uint8_t SDU_updateIV(SDU_struct *comm_params)
         if (!BG96_MQTTpublish(comm_params->topic_to_pub, date_request, date_request_len))
         {
             ret = SDU_closeConnection(comm_params);
-            if (ret != 0x00)
+            if (ret != SDU_OK)
                 return ret;
             return BG96_ERROR;
         }
@@ -533,7 +528,7 @@ uint8_t SDU_updateIV(SDU_struct *comm_params)
 
     uint8_t date_update[128];
     uint16_t date_update_length;
-    uint8_t date_update_raw[16];
+    uint8_t date_update_raw[32];
     uint16_t date_update_raw_length;
     uint8_t date[128];
 
@@ -549,7 +544,7 @@ uint8_t SDU_updateIV(SDU_struct *comm_params)
             if (!BG96_RecvUDP(date_update, &expected_size))
             {
                 ret = SDU_closeConnection(comm_params);
-                if (ret != 0x00)
+                if (ret != SDU_OK)
                     return ret;
                 return BG96_ERROR;
             }
@@ -562,12 +557,13 @@ uint8_t SDU_updateIV(SDU_struct *comm_params)
         uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
         do
         {
-            delay(1000);
+            //delay(1000);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
             expected_size = HEADER_LENGTH + DATE_UPDATE_LEN + CRC8_LENGTH;
             if (!BG96_RecvTCP(date_update, &expected_size))
             {
                 ret = SDU_closeConnection(comm_params);
-                if (ret != 0x00)
+                if (ret != SDU_OK)
                     return ret;
                 return BG96_ERROR;
             }
@@ -580,7 +576,8 @@ uint8_t SDU_updateIV(SDU_struct *comm_params)
         uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
         do
         {
-            delay(1000);
+            //delay(1000);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
             expected_size = HEADER_LENGTH + DATE_UPDATE_LEN + CRC8_LENGTH;
             BG96_MQTTcollectData(date_update, &expected_size);
             num_of_attempts--;
@@ -604,7 +601,7 @@ uint8_t SDU_updateIV(SDU_struct *comm_params)
     if (ret != 0)
     {
         uint8_t ret1 = SDU_closeConnection(comm_params);
-        if (ret1 != 0x00)
+        if (ret1 != SDU_OK)
             return ret1;
         return ret;
     }
@@ -612,7 +609,7 @@ uint8_t SDU_updateIV(SDU_struct *comm_params)
     if (date_update_raw_length == ERROR_CODE_LENGTH)
     {
         ret = SDU_closeConnection(comm_params);
-        if (ret != 0x00)
+        if (ret != SDU_OK)
             return ret;
         return date_update_raw[0];
     }
@@ -629,7 +626,7 @@ uint8_t SDU_updateIV(SDU_struct *comm_params)
     if (!Crypto_AES(&aes, DECRYPT, shared_secret, 256, iv, date_update_raw, date, DATE_UPDATE_LEN))
     {
         ret = SDU_closeConnection(comm_params);
-        if (ret != 0x00)
+        if (ret != SDU_OK)
             return ret;
         return CRYPTO_FUNC_ERROR;   
     }
@@ -640,7 +637,7 @@ uint8_t SDU_updateIV(SDU_struct *comm_params)
     }
 
     ret = SDU_closeConnection(comm_params);
-    if (ret != 0x00)
+    if (ret != SDU_OK)
         return ret;
 
     // speedy conversion
@@ -724,7 +721,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
         DEBUG_STREAM.println( "end generation of pvt pub key");
 
     ret = SDU_establishConnection(comm_params);
-    if (ret != 0x00)
+    if (ret != SDU_OK)
         return ret;
 
     ret = SDU_constructPacket(comm_params->device_mac, CLIENT_HELLO_HEADER, client_hello_raw, CLIENT_HELLO_DATA_LENGTH, client_hello, &client_hello_len);
@@ -732,7 +729,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
     if (ret != 0)
     {
         uint8_t ret1 = SDU_closeConnection(comm_params);
-        if (ret1 != 0x00)
+        if (ret1 != SDU_OK)
             return ret1;
         return ret;
     }
@@ -747,7 +744,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
         if (!BG96_SendUDP(comm_params->server_IP, comm_params->port, client_hello, client_hello_len))
         {
             ret = SDU_closeConnection(comm_params);
-            if (ret != 0x00)
+            if (ret != SDU_OK)
                 return ret;
             return BG96_ERROR;
         }
@@ -757,7 +754,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
         if (!BG96_SendTCP(client_hello, client_hello_len))
         {
             ret = SDU_closeConnection(comm_params);
-            if (ret != 0x00)
+            if (ret != SDU_OK)
                 return ret;
             return BG96_ERROR;
         }
@@ -767,7 +764,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
         if (!BG96_MQTTpublish(comm_params->topic_to_pub, client_hello, client_hello_len))
         {
             ret = SDU_closeConnection(comm_params);
-            if (ret != 0x00)
+            if (ret != SDU_OK)
                 return ret;
             return BG96_ERROR;
         }
@@ -801,12 +798,13 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
         uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
         do
         {
-            delay(1000);
+            //delay(1000);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
             expected_size = HEADER_LENGTH + SERVER_HELLO_LENGTH + CRC8_LENGTH;
             if (!BG96_RecvUDP(server_hello, &expected_size))
             {
                 ret = SDU_closeConnection(comm_params);
-                if (ret != 0x00)
+                if (ret != SDU_OK)
                     return ret;
                 return BG96_ERROR;
             }
@@ -818,19 +816,21 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
         uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
         do
         {
-            delay(1000);
+            //delay(1000);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
             expected_size = HEADER_LENGTH + SERVER_HELLO_LENGTH + CRC8_LENGTH;
             if (!BG96_RecvTCP(server_hello, &expected_size))
             {
                 ret = SDU_closeConnection(comm_params);
-                if (ret != 0x00)
+                if (ret != SDU_OK)
                     return ret;
                 return BG96_ERROR;
             }
             num_of_attempts--;
         } while(expected_size == 0 && num_of_attempts != 0);
 
-        if (!SDU_closeConnection(comm_params))
+        ret = SDU_closeConnection(comm_params);
+        if (ret != SDU_OK)
             return BG96_ERROR;
     }
     else if (comm_params->type_of_protocol == MQTT && comm_params->type_of_tunnel == BG96)
@@ -838,7 +838,8 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
         uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
         do
         {
-            delay(1000);
+            //delay(1000);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
             expected_size = HEADER_LENGTH + SERVER_HELLO_LENGTH + CRC8_LENGTH;
             BG96_MQTTcollectData(server_hello, &expected_size);
             num_of_attempts--;
@@ -862,7 +863,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
     if (ret != 0)
     {
         uint8_t ret1 = SDU_closeConnection(comm_params);
-        if (ret1 != 0x00)
+        if (ret1 != SDU_OK)
             return ret1;
         return ret;
     }
@@ -870,7 +871,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
     if (server_hello_raw_length == ERROR_CODE_LENGTH)
     {
         uint8_t ret1 = SDU_closeConnection(comm_params);
-        if (ret1 != 0x00)
+        if (ret1 != SDU_OK)
             return ret1;
         return server_hello_raw[0];
     }
@@ -885,7 +886,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
     if (ret != 0)
     {
         uint8_t ret1 = SDU_closeConnection(comm_params);
-        if (ret1 != 0x00)
+        if (ret1 != SDU_OK)
             return ret1;
         return ret;
     }
@@ -893,7 +894,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
     if (!Crypto_AES(&aes, DECRYPT, shared_secret, 256, iv, server_hello_raw, server_hello_decrypted, SERVER_HELLO_LENGTH))
     {
         ret = SDU_closeConnection(comm_params);
-        if (ret != 0x00)
+        if (ret != SDU_OK)
             return ret;
         return CRYPTO_FUNC_ERROR;
     }
@@ -904,7 +905,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
     if (!Crypto_setPeerPublicKey(&ecdh_ctx, server_hello_decrypted))
     {
         ret = SDU_closeConnection(comm_params);
-        if (ret != 0x00)
+        if (ret != SDU_OK)
             return ret;
         return CRYPTO_FUNC_ERROR;
     }
@@ -912,7 +913,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
     if (!Crypto_ECDH(&ecdh_ctx))
     {
         ret = SDU_closeConnection(comm_params);
-        if (ret != 0x00)
+        if (ret != SDU_OK)
             return ret;
         return CRYPTO_FUNC_ERROR;
     }
@@ -920,7 +921,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
     if (!Crypto_getSharedSecret(&ecdh_ctx, session_key))
     {
         ret = SDU_closeConnection(comm_params);
-        if (ret != 0x00)
+        if (ret != SDU_OK)
             return ret;
         return CRYPTO_FUNC_ERROR;
     }
@@ -932,7 +933,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
     if (!Crypto_Random(&drbg_ctx, Rb, 16))
     {
         ret = SDU_closeConnection(comm_params);
-        if (ret != 0x00)
+        if (ret != SDU_OK)
             return ret;
         return CRYPTO_FUNC_ERROR;
     }
@@ -950,7 +951,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
     if (ret != 0)
     {
         ret = SDU_closeConnection(comm_params);
-        if (ret != 0x00)
+        if (ret != SDU_OK)
             return ret;
         return ret;
     }
@@ -958,7 +959,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
     if (!Crypto_AES(&aes, ENCRYPT, session_key, 256, iv, challenge1, client_verify_raw, CLIENT_VERIFY_DATA_LENGTH))
     {
         ret = SDU_closeConnection(comm_params);
-        if (ret != 0x00)
+        if (ret != SDU_OK)
             return ret;
         return CRYPTO_FUNC_ERROR;
     }
@@ -973,7 +974,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
     if (ret != 0)
     {
         uint8_t ret1 = SDU_closeConnection(comm_params);
-        if (ret1 != 0x00)
+        if (ret1 != SDU_OK)
             return ret1;
         return ret;
     }
@@ -983,7 +984,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
         if (!BG96_SendUDP(comm_params->server_IP, comm_params->port, client_verify, client_verify_len))
         {
             ret = SDU_closeConnection(comm_params);
-            if (ret != 0x00)
+            if (ret != SDU_OK)
                 return ret;
             return BG96_ERROR;
         }
@@ -991,12 +992,12 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
     else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == BG96)
     {
         ret = SDU_establishConnection(comm_params);
-        if (ret != 0x00)
+        if (ret != SDU_OK)
             return ret;
         if (!BG96_SendTCP(client_verify, client_verify_len))
         {
             ret = SDU_closeConnection(comm_params);
-            if (ret != 0x00)
+            if (ret != SDU_OK)
                 return ret;
             return BG96_ERROR;
         }
@@ -1006,7 +1007,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
         if (!BG96_MQTTpublish(comm_params->topic_to_pub, client_verify, client_verify_len))
         {
             ret = SDU_closeConnection(comm_params);
-            if (ret != 0x00)
+            if (ret != SDU_OK)
                 return ret;
             return BG96_ERROR;
         }
@@ -1019,7 +1020,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
     else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == WIFI)
     {
         ret = SDU_establishConnection(comm_params);
-        if (ret != 0x00)
+        if (ret != SDU_OK)
             return ret;
         if (!WiFi_TCPsend(client_verify, client_verify_len))
             return WIFI_ERROR;
@@ -1042,12 +1043,13 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
         uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
         do
         {
-            delay(1000);
+            //delay(1000);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
             expected_size = HEADER_LENGTH + SERVER_VERIFY_LENGTH + CRC8_LENGTH;
             if (!BG96_RecvUDP(server_verify, &expected_size))
             {
                 ret = SDU_closeConnection(comm_params);
-                if (ret != 0x00)
+                if (ret != SDU_OK)
                     return ret;
                 return BG96_ERROR;
             }
@@ -1059,12 +1061,13 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
         uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
         do
         {
-            delay(1000);
+            //delay(1000);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
             expected_size = HEADER_LENGTH + SERVER_VERIFY_LENGTH + CRC8_LENGTH;
             if (!BG96_RecvTCP(server_verify, &expected_size))
             {
                 ret = SDU_closeConnection(comm_params);
-                if (ret != 0x00)
+                if (ret != SDU_OK)
                     return ret;
                 return BG96_ERROR;
             }
@@ -1076,7 +1079,8 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
         uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
         do
         {
-            delay(1000);
+            //delay(1000);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
             expected_size = HEADER_LENGTH + SERVER_VERIFY_LENGTH + CRC8_LENGTH;
             BG96_MQTTcollectData(server_verify, &expected_size);
             num_of_attempts--;
@@ -1095,14 +1099,15 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
         WiFi_MQTTrecv(server_verify, &expected_size);
     }
 
-    SDU_debugPrint((int8_t *)"Server verify", server_verify, expected_size);
+    if (SDU_debug_enable)
+        SDU_debugPrint((int8_t *)"Server verify", server_verify, expected_size);
 
     server_verify_length = expected_size;
     ret = SDU_parsePacket(server_verify, server_verify_length, server_verify_raw, &server_verify_raw_length);
     if (ret != 0)
     {
         uint8_t ret1 = SDU_closeConnection(comm_params);
-        if (ret1 != 0x00)
+        if (ret1 != SDU_OK)
             return ret1;
         return ret;
     }
@@ -1110,7 +1115,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
     if (server_verify_raw_length == ERROR_CODE_LENGTH)
     {
         ret = SDU_closeConnection(comm_params);
-        if (ret != 0x00)
+        if (ret != SDU_OK)
             return ret;
         return server_verify_raw[0];
     }
@@ -1126,7 +1131,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
     if (ret != 0)
     {
         uint8_t ret1 = SDU_closeConnection(comm_params);
-        if (ret1 != 0x00)
+        if (ret1 != SDU_OK)
             return ret1;
         return ret;
     }
@@ -1135,7 +1140,7 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
         return CRYPTO_FUNC_ERROR;
 
     ret = SDU_closeConnection(comm_params);
-    if (ret != 0x00)
+    if (ret != SDU_OK)
         return ret;
 
     return SDU_OK;
@@ -1166,9 +1171,8 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
         // pad data to 16 or 32
         raw_data_len += 16 - raw_data_len % 16;
 
-
         ret = SDU_establishConnection(comm_params);
-        if (ret != 0x00)
+        if (ret != SDU_OK)
             return ret;
 
         ret = SDU_constructPacket(comm_params->device_mac, SENSOR_ENC_DATA_HEADER, enc_sensor_data_raw, raw_data_len, sensor_data, &sensor_data_len);
@@ -1176,7 +1180,7 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
         if (ret != 0)
         {
             uint8_t ret1 = SDU_closeConnection(comm_params);
-            if (ret1 != 0x00)
+            if (ret1 != SDU_OK)
                 return ret1;
             return ret;
         }
@@ -1191,7 +1195,7 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
             if (!BG96_SendUDP(comm_params->server_IP, comm_params->port, sensor_data, sensor_data_len))
             {
                 ret = SDU_closeConnection(comm_params);
-                if (ret != 0x00)
+                if (ret != SDU_OK)
                     return ret;
                 return BG96_ERROR;
             }
@@ -1201,7 +1205,7 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
             if (!BG96_SendTCP(sensor_data, sensor_data_len))
             {
                 ret = SDU_closeConnection(comm_params);
-                if (ret != 0x00)
+                if (ret != SDU_OK)
                     return ret;
                 return BG96_ERROR;
             }
@@ -1211,7 +1215,7 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
             if (!BG96_MQTTpublish(comm_params->topic_to_pub, sensor_data, sensor_data_len))
             {
                 ret = SDU_closeConnection(comm_params);
-                if (ret != 0x00)
+                if (ret != SDU_OK)
                     return ret;
                 return BG96_ERROR;
             }
@@ -1234,7 +1238,7 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
 
         uint8_t sensor_response[64];
         uint16_t sensor_response_length;
-        uint8_t sensor_response_raw[16];
+        uint8_t sensor_response_raw[32];
         uint16_t sensor_response_raw_length;
 
         expected_size = HEADER_LENGTH + SENSOR_RESPONSE_LENGTH;
@@ -1249,7 +1253,7 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
                 if (!BG96_RecvUDP(sensor_response, &expected_size))
                 {
                     ret = SDU_closeConnection(comm_params);
-                    if (ret != 0x00)
+                    if (ret != SDU_OK)
                         return ret;
                     return BG96_ERROR;
                 }
@@ -1262,11 +1266,12 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
             do
             {
                 delay(1000);
+                //vTaskDelay(1000 / portTICK_PERIOD_MS);
                 expected_size = HEADER_LENGTH + SENSOR_RESPONSE_LENGTH;
                 if (!BG96_RecvTCP(sensor_response, &expected_size))
                 {
                     ret = SDU_closeConnection(comm_params);
-                    if (ret != 0x00)
+                    if (ret != SDU_OK)
                         return ret;
                     return BG96_ERROR;
                 }
@@ -1297,7 +1302,8 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
             WiFi_MQTTrecv(sensor_response, &expected_size);
         }
 
-        SDU_debugPrint((int8_t *)"Sensor response", sensor_response, expected_size);
+        if (SDU_debug_enable)
+            SDU_debugPrint((int8_t *)"Sensor response", sensor_response, expected_size);
 
         sensor_response_length = expected_size;
         ret = SDU_parsePacket(sensor_response, sensor_response_length, sensor_response_raw, &sensor_response_raw_length);
@@ -1305,7 +1311,7 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
         if (ret != 0)
         {
             uint8_t ret1 = SDU_closeConnection(comm_params);
-            if (ret1 != 0x00)
+            if (ret1 != SDU_OK)
                 return ret1;
             return ret;
         }
@@ -1313,7 +1319,7 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
         if (sensor_response_raw_length != SENSOR_RESPONSE_LENGTH)
         {
             ret = SDU_closeConnection(comm_params);
-            if (ret != 0x00)
+            if (ret != SDU_OK)
                 return ret;
             return SERVER_ERROR(INVALID_NUM_OF_BYTES);
         }
@@ -1324,7 +1330,7 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
         }
 
         ret = SDU_closeConnection(comm_params);
-        if (ret != 0x00)
+        if (ret != SDU_OK)
             return ret;
 
         return sensor_response_raw[0];
@@ -1335,7 +1341,7 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
         uint16_t sensor_data_len;
 
         ret = SDU_establishConnection(comm_params);
-        if (ret != 0x00)
+        if (ret != SDU_OK)
             return ret;
 
         ret = SDU_constructPacket(comm_params->device_mac, SENSOR_DATA_HEADER, raw_data, raw_data_len, sensor_data, &sensor_data_len);
@@ -1343,7 +1349,7 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
         if (ret != 0)
         {
             uint8_t ret1 = SDU_closeConnection(comm_params);
-            if (ret1 != 0x00)
+            if (ret1 != SDU_OK)
                 return ret1;
             return ret;
         }
@@ -1358,7 +1364,7 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
             if (!BG96_SendUDP(comm_params->server_IP, comm_params->port, sensor_data, sensor_data_len))
             {
                 ret = SDU_closeConnection(comm_params);
-                if (ret != 0x00)
+                if (ret != SDU_OK)
                     return ret;
                 return BG96_ERROR;
             }
@@ -1368,7 +1374,7 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
             if (!BG96_SendTCP(sensor_data, sensor_data_len))
             {
                 ret = SDU_closeConnection(comm_params);
-                if (ret != 0x00)
+                if (ret != SDU_OK)
                     return ret;
                 return BG96_ERROR;
             }
@@ -1378,7 +1384,7 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
             if (!BG96_MQTTpublish(comm_params->topic_to_pub, sensor_data, sensor_data_len))
             {
                 ret = SDU_closeConnection(comm_params);
-                if (ret != 0x00)
+                if (ret != SDU_OK)
                     return ret;
                 return BG96_ERROR;
             }
@@ -1416,7 +1422,7 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
                 if (!BG96_RecvUDP(sensor_response, &expected_size))
                 {
                     ret = SDU_closeConnection(comm_params);
-                    if (ret != 0x00)
+                    if (ret != SDU_OK)
                         return ret;
                     return BG96_ERROR;
                 }
@@ -1428,12 +1434,12 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
             uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
             do
             {
-                delay(1000);
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
                 expected_size = HEADER_LENGTH + SENSOR_RESPONSE_LENGTH;
                 if (!BG96_RecvTCP(sensor_response, &expected_size))
                 {
                     ret = SDU_closeConnection(comm_params);
-                    if (ret != 0x00)
+                    if (ret != SDU_OK)
                         return ret;
                     return BG96_ERROR;
                 }
@@ -1445,7 +1451,7 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
             uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
             do
             {
-                delay(1000);
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
                 expected_size = HEADER_LENGTH + SENSOR_RESPONSE_LENGTH;
                 BG96_MQTTcollectData(sensor_response, &expected_size);
                 num_of_attempts--;
@@ -1470,7 +1476,7 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
         if (ret != 0)
         {
             uint8_t ret1 = SDU_closeConnection(comm_params);
-            if (ret1 != 0x00)
+            if (ret1 != SDU_OK)
                 return ret1;
             return ret;
         }
@@ -1478,7 +1484,7 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
         if (sensor_response_raw_length != SENSOR_RESPONSE_LENGTH)
         {
             ret = SDU_closeConnection(comm_params);
-            if (ret != 0x00)
+            if (ret != SDU_OK)
                 return ret;
             return SERVER_ERROR(INVALID_NUM_OF_BYTES);
         }
@@ -1489,7 +1495,7 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
         }
 
         ret = SDU_closeConnection(comm_params);
-        if (ret != 0x00)
+        if (ret != SDU_OK)
             return ret;
 
         return sensor_response_raw[0];
