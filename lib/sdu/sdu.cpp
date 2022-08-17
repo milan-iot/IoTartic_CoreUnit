@@ -228,6 +228,18 @@ uint8_t SDU_constructPacket(uint8_t *mac, uint16_t header_type, uint8_t *in_data
             *out_data_len = MAC_LENGTH + HEADER_LENGTH + in_data_len + CRC8_LENGTH;
         break;
 
+        case FOTA_INFO_REQUEST_HEADER:
+            *out_data_len = MAC_LENGTH + HEADER_LENGTH;
+            return SDU_OK;
+        break;
+
+        case FOTA_CODE_REQUEST_HEADER:
+            memcpy(out_data + MAC_LENGTH + HEADER_LENGTH, in_data, in_data_len);
+            //Serial.println("in data len " + String(in_data_len));
+            crc.add((uint8_t*)in_data, in_data_len);
+            *out_data_len = MAC_LENGTH + HEADER_LENGTH + in_data_len + CRC8_LENGTH;
+        break;
+
         default:
             return LOCAL_ERROR(INVALID_HEADER);
         break;
@@ -282,6 +294,20 @@ uint8_t SDU_parsePacket(uint8_t *input, uint16_t input_length, uint8_t *output, 
             return SDU_OK;
         break;
 
+        case FOTA_INFO_RESPONSE_HEADER:
+             if (input_length != HEADER_LENGTH + INFO_RESPONSE_LEN + CRC8_LENGTH)
+                return SERVER_ERROR(INVALID_NUM_OF_BYTES);
+            memcpy(output, input + HEADER_LENGTH, INFO_RESPONSE_LEN);
+            *output_length = INFO_RESPONSE_LEN;
+        break;
+
+        case FOTA_CODE_RESPONSE_HEADER:
+            //if (input_length != HEADER_LENGTH + INFO_RESPONSE_LEN + CRC8_LENGTH)
+            //    return SERVER_ERROR(INVALID_NUM_OF_BYTES);
+            memcpy(output, input + HEADER_LENGTH, input_length - HEADER_LENGTH - CRC8_LENGTH);
+            *output_length = input_length - HEADER_LENGTH - CRC8_LENGTH;
+        break;
+
         default:
             return SERVER_ERROR(INVALID_HEADER);
     }
@@ -304,19 +330,18 @@ uint8_t SDU_genIV(uint8_t *iv)
     str += ((rtc.getMonth() + 1) < 10) ? ("0" + String(rtc.getMonth() + 1)) : String(rtc.getMonth() + 1);
     str += String(rtc.getYear());
 
-    DEBUG_STREAM.println(str);
+    //DEBUG_STREAM.println(str);
 
     str.toCharArray(hash_input, 32);
 
     mbedtls_md_context_t ctx;
-    Crypto_debugEnable(true);
     
     if (!Crypto_Digest(&ctx, SHA256, (uint8_t *) hash_input, strlen(hash_input), hash_output))
       return CRYPTO_FUNC_ERROR;
 
     memcpy(iv, hash_output, 16);
 
-    if (SDU_debugEnable)
+    if (SDU_debug_enable)
         SDU_debugPrint((int8_t *)"IV: ", iv, 16);
     
     return SDU_OK;
@@ -457,9 +482,6 @@ uint8_t SDU_updateIV(SDU_struct *comm_params)
     uint16_t expected_size = 0;
     byte shared_secret[32];
     mbedtls_md_context_t ctx;
-
-    if (SDU_debug_enable)
-        Crypto_debugEnable(true);
     
     if (!Crypto_Digest(&ctx, HMAC_SHA256, (uint8_t *) comm_params->hmac_salt, strlen(comm_params->hmac_salt), shared_secret, (uint8_t *) comm_params->password, strlen(comm_params->password)))
       return CRYPTO_FUNC_ERROR;
@@ -480,51 +502,10 @@ uint8_t SDU_updateIV(SDU_struct *comm_params)
         SDU_debugPrint((int8_t *)"Date request", date_request, date_request_len);
     }
 
-    if (comm_params->type_of_protocol == UDP && comm_params->type_of_tunnel == BG96)
-    {
-        if (!BG96_SendUDP(comm_params->server_IP, comm_params->port, date_request, date_request_len))
-        {
-            ret = SDU_closeConnection(comm_params);
-            if (ret != SDU_OK)
-                return ret;
-            return BG96_ERROR;
-        }
-    }
-    else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == BG96)
-    {
-        if (!BG96_SendTCP(date_request, date_request_len))
-        {
-            ret = SDU_closeConnection(comm_params);
-            if (ret != SDU_OK)
-                return ret;
-            return BG96_ERROR;
-        }
-    }
-    else if (comm_params->type_of_protocol == MQTT && comm_params->type_of_tunnel == BG96)
-    {
-        if (!BG96_MQTTpublish(comm_params->topic_to_pub, date_request, date_request_len))
-        {
-            ret = SDU_closeConnection(comm_params);
-            if (ret != SDU_OK)
-                return ret;
-            return BG96_ERROR;
-        }
-    }
-    else if (comm_params->type_of_protocol == UDP && comm_params->type_of_tunnel == WIFI)
-    {
-        if (!WiFi_UDPsend(comm_params->server_IP, comm_params->port, date_request, date_request_len))
-            return WIFI_ERROR;
-    }
-    else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == WIFI)
-    {
-        if (!WiFi_TCPsend(date_request, date_request_len))
-            return WIFI_ERROR;
-    }
-    else if (comm_params->type_of_protocol == MQTT && comm_params->type_of_tunnel == WIFI)
-    {
-        if (!WiFi_MQTTsend(comm_params->topic_to_pub, date_request, date_request_len))
-            return WIFI_ERROR;
-    }
+    ret = SDU_sendProc(comm_params, date_request, date_request_len);
+
+    if (ret != SDU_OK)
+        return ret;
 
     uint8_t date_update[128];
     uint16_t date_update_length;
@@ -534,67 +515,10 @@ uint8_t SDU_updateIV(SDU_struct *comm_params)
 
     expected_size = HEADER_LENGTH + DATE_UPDATE_LEN + CRC8_LENGTH;
 
-    if (comm_params->type_of_protocol == UDP && comm_params->type_of_tunnel == BG96)
-    {
-        uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
-        do
-        {
-            delay(1000);
-            expected_size = HEADER_LENGTH + DATE_UPDATE_LEN + CRC8_LENGTH;
-            if (!BG96_RecvUDP(date_update, &expected_size))
-            {
-                ret = SDU_closeConnection(comm_params);
-                if (ret != SDU_OK)
-                    return ret;
-                return BG96_ERROR;
-            }
-            
-            num_of_attempts--;
-        } while(expected_size == 0 && num_of_attempts != 0);
-    }
-    else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == BG96)
-    {
-        uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
-        do
-        {
-            //delay(1000);
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
-            expected_size = HEADER_LENGTH + DATE_UPDATE_LEN + CRC8_LENGTH;
-            if (!BG96_RecvTCP(date_update, &expected_size))
-            {
-                ret = SDU_closeConnection(comm_params);
-                if (ret != SDU_OK)
-                    return ret;
-                return BG96_ERROR;
-            }
-            
-            num_of_attempts--;
-        } while(expected_size == 0 && num_of_attempts != 0);
-    }
-    else if (comm_params->type_of_protocol == MQTT && comm_params->type_of_tunnel == BG96)
-    {
-        uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
-        do
-        {
-            //delay(1000);
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
-            expected_size = HEADER_LENGTH + DATE_UPDATE_LEN + CRC8_LENGTH;
-            BG96_MQTTcollectData(date_update, &expected_size);
-            num_of_attempts--;
-        } while(expected_size == 0 && num_of_attempts != 0);
-    }
-    else if (comm_params->type_of_protocol == UDP && comm_params->type_of_tunnel == WIFI)
-    {
-        WiFi_UDPrecv((char *)date_update, &expected_size);
-    }
-    else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == WIFI)
-    {
-        WiFi_TCPrecv((char *)date_update, &expected_size);
-    }
-    else if (comm_params->type_of_protocol == MQTT && comm_params->type_of_tunnel == WIFI)
-    {
-        WiFi_MQTTrecv(date_update, &expected_size);
-    }
+    ret = SDU_receiveProc(comm_params, date_update, expected_size);
+
+    if (ret != SDU_OK)
+        return ret;
 
     date_update_length = expected_size;
     ret = SDU_parsePacket(date_update, date_update_length, date_update_raw, &date_update_raw_length);
@@ -659,6 +583,18 @@ uint8_t SDU_updateIV(SDU_struct *comm_params)
 uint8_t SDU_getDay(int16_t *day)
 {
     *day =  rtc.getDay();
+    return SDU_OK;
+}
+
+uint8_t SDU_getHour(int16_t *hour)
+{
+    *hour =  rtc.getHour(true);
+    return SDU_OK;
+}
+
+uint8_t SDU_getMinute(int16_t *minute)
+{
+    *minute =  rtc.getMinute();
     return SDU_OK;
 }
 
@@ -739,51 +675,10 @@ uint8_t SDU_handshake(SDU_struct *comm_params)
         SDU_debugPrint((int8_t *)"Client hello", client_hello, client_hello_len);
     }
 
-    if (comm_params->type_of_protocol == UDP && comm_params->type_of_tunnel == BG96)
-    {
-        if (!BG96_SendUDP(comm_params->server_IP, comm_params->port, client_hello, client_hello_len))
-        {
-            ret = SDU_closeConnection(comm_params);
-            if (ret != SDU_OK)
-                return ret;
-            return BG96_ERROR;
-        }
-    }
-    else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == BG96)
-    {
-        if (!BG96_SendTCP(client_hello, client_hello_len))
-        {
-            ret = SDU_closeConnection(comm_params);
-            if (ret != SDU_OK)
-                return ret;
-            return BG96_ERROR;
-        }
-    }
-    else if (comm_params->type_of_protocol == MQTT && comm_params->type_of_tunnel == BG96)
-    {
-        if (!BG96_MQTTpublish(comm_params->topic_to_pub, client_hello, client_hello_len))
-        {
-            ret = SDU_closeConnection(comm_params);
-            if (ret != SDU_OK)
-                return ret;
-            return BG96_ERROR;
-        }
-    }
-    else if (comm_params->type_of_protocol == UDP && comm_params->type_of_tunnel == WIFI)
-    {
-        if (!WiFi_UDPsend(comm_params->server_IP, comm_params->port, client_hello, client_hello_len))
-            return WIFI_ERROR;
-    }
-    else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == WIFI)
-    {
-        if (!WiFi_TCPsend(client_hello, client_hello_len))
-            return WIFI_ERROR;
-    }
-    else if (comm_params->type_of_protocol == MQTT && comm_params->type_of_tunnel == WIFI)
-    {
-        if (!WiFi_MQTTsend(comm_params->topic_to_pub, client_hello, client_hello_len))
-            return WIFI_ERROR;
-    }
+    ret = SDU_sendProc(comm_params, client_hello, client_hello_len);
+
+    if (ret != SDU_OK)
+        return ret;
 
     uint8_t server_hello[128];
     uint16_t server_hello_length;
@@ -1190,51 +1085,10 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
             SDU_debugPrint((int8_t *)"Sensor data", sensor_data, sensor_data_len);
         }
 
-        if (comm_params->type_of_protocol == UDP && comm_params->type_of_tunnel == BG96)
-        {
-            if (!BG96_SendUDP(comm_params->server_IP, comm_params->port, sensor_data, sensor_data_len))
-            {
-                ret = SDU_closeConnection(comm_params);
-                if (ret != SDU_OK)
-                    return ret;
-                return BG96_ERROR;
-            }
-        }
-        else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == BG96)
-        {
-            if (!BG96_SendTCP(sensor_data, sensor_data_len))
-            {
-                ret = SDU_closeConnection(comm_params);
-                if (ret != SDU_OK)
-                    return ret;
-                return BG96_ERROR;
-            }
-        }
-        else if (comm_params->type_of_protocol == MQTT && comm_params->type_of_tunnel == BG96)
-        {
-            if (!BG96_MQTTpublish(comm_params->topic_to_pub, sensor_data, sensor_data_len))
-            {
-                ret = SDU_closeConnection(comm_params);
-                if (ret != SDU_OK)
-                    return ret;
-                return BG96_ERROR;
-            }
-        }
-        else if (comm_params->type_of_protocol == UDP && comm_params->type_of_tunnel == WIFI)
-        {
-            if (!WiFi_UDPsend(comm_params->server_IP, comm_params->port, sensor_data, sensor_data_len))
-                return WIFI_ERROR;
-        }
-        else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == WIFI)
-        {
-            if (!WiFi_TCPsend(sensor_data, sensor_data_len))
-                return WIFI_ERROR;
-        }
-        else if (comm_params->type_of_protocol == MQTT && comm_params->type_of_tunnel == WIFI)
-        {
-            if (!WiFi_MQTTsend(comm_params->topic_to_pub, sensor_data, sensor_data_len))
-                return WIFI_ERROR;
-        }
+        ret = SDU_sendProc(comm_params, sensor_data, sensor_data_len);
+
+        if (ret != SDU_OK)
+            return ret;
 
         uint8_t sensor_response[64];
         uint16_t sensor_response_length;
@@ -1243,64 +1097,10 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
 
         expected_size = HEADER_LENGTH + SENSOR_RESPONSE_LENGTH;
 
-        if (comm_params->type_of_protocol == UDP && comm_params->type_of_tunnel == BG96)
-        {
-            uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
-            do
-            {
-                delay(1000);
-                expected_size = HEADER_LENGTH + SENSOR_RESPONSE_LENGTH;
-                if (!BG96_RecvUDP(sensor_response, &expected_size))
-                {
-                    ret = SDU_closeConnection(comm_params);
-                    if (ret != SDU_OK)
-                        return ret;
-                    return BG96_ERROR;
-                }
-                num_of_attempts--;
-            } while(expected_size == 0 && num_of_attempts != 0);
-        }
-        else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == BG96)
-        {
-            uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
-            do
-            {
-                delay(1000);
-                //vTaskDelay(1000 / portTICK_PERIOD_MS);
-                expected_size = HEADER_LENGTH + SENSOR_RESPONSE_LENGTH;
-                if (!BG96_RecvTCP(sensor_response, &expected_size))
-                {
-                    ret = SDU_closeConnection(comm_params);
-                    if (ret != SDU_OK)
-                        return ret;
-                    return BG96_ERROR;
-                }
-                num_of_attempts--;
-            } while(expected_size == 0 && num_of_attempts != 0);
-        }
-        else if (comm_params->type_of_protocol == MQTT && comm_params->type_of_tunnel == BG96)
-        {
-            uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
-            do
-            {
-                delay(1000);
-                expected_size = HEADER_LENGTH + SENSOR_RESPONSE_LENGTH;
-                BG96_MQTTcollectData(sensor_response, &expected_size);
-                num_of_attempts--;
-            } while(expected_size == 0 && num_of_attempts != 0);
-        }
-        else if (comm_params->type_of_protocol == UDP && comm_params->type_of_tunnel == WIFI)
-        {
-            WiFi_UDPrecv((char *)sensor_response, &expected_size);
-        }
-        else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == WIFI)
-        {
-            WiFi_TCPrecv((char *)sensor_response, &expected_size);
-        }
-        else if (comm_params->type_of_protocol == MQTT && comm_params->type_of_tunnel == WIFI)
-        {
-            WiFi_MQTTrecv(sensor_response, &expected_size);
-        }
+        ret = SDU_receiveProc(comm_params, sensor_response, expected_size);
+
+        if (ret != SDU_OK)
+            return ret;
 
         if (SDU_debug_enable)
             SDU_debugPrint((int8_t *)"Sensor response", sensor_response, expected_size);
@@ -1359,51 +1159,10 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
             SDU_debugPrint((int8_t *)"Sensor data", sensor_data, sensor_data_len);
         }
 
-        if (comm_params->type_of_protocol == UDP && comm_params->type_of_tunnel == BG96)
-        {
-            if (!BG96_SendUDP(comm_params->server_IP, comm_params->port, sensor_data, sensor_data_len))
-            {
-                ret = SDU_closeConnection(comm_params);
-                if (ret != SDU_OK)
-                    return ret;
-                return BG96_ERROR;
-            }
-        }
-        else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == BG96)
-        {
-            if (!BG96_SendTCP(sensor_data, sensor_data_len))
-            {
-                ret = SDU_closeConnection(comm_params);
-                if (ret != SDU_OK)
-                    return ret;
-                return BG96_ERROR;
-            }
-        }
-        else if (comm_params->type_of_protocol == MQTT && comm_params->type_of_tunnel == BG96)
-        {
-            if (!BG96_MQTTpublish(comm_params->topic_to_pub, sensor_data, sensor_data_len))
-            {
-                ret = SDU_closeConnection(comm_params);
-                if (ret != SDU_OK)
-                    return ret;
-                return BG96_ERROR;
-            }
-        }
-        else if (comm_params->type_of_protocol == UDP && comm_params->type_of_tunnel == WIFI)
-        {
-            if (!WiFi_UDPsend(comm_params->server_IP, comm_params->port, sensor_data, sensor_data_len))
-                return WIFI_ERROR;
-        }
-        else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == WIFI)
-        {
-            if (!WiFi_TCPsend(sensor_data, sensor_data_len))
-                return WIFI_ERROR;
-        }
-        else if (comm_params->type_of_protocol == MQTT && comm_params->type_of_tunnel == WIFI)
-        {
-            if (!WiFi_MQTTsend(comm_params->topic_to_pub, sensor_data, sensor_data_len))
-                return WIFI_ERROR;
-        }
+        ret = SDU_sendProc(comm_params, sensor_data, sensor_data_len);
+
+        if (ret != SDU_OK)
+            return ret;
 
         uint8_t sensor_response[64];
         uint16_t sensor_response_length;
@@ -1412,63 +1171,10 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
 
         expected_size = HEADER_LENGTH + SENSOR_RESPONSE_LENGTH;
 
-        if (comm_params->type_of_protocol == UDP && comm_params->type_of_tunnel == BG96)
-        {
-            uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
-            do
-            {
-                delay(1000);
-                expected_size = HEADER_LENGTH + SENSOR_RESPONSE_LENGTH;
-                if (!BG96_RecvUDP(sensor_response, &expected_size))
-                {
-                    ret = SDU_closeConnection(comm_params);
-                    if (ret != SDU_OK)
-                        return ret;
-                    return BG96_ERROR;
-                }
-                num_of_attempts--;
-            } while(expected_size == 0 && num_of_attempts != 0);
-        }
-        else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == BG96)
-        {
-            uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
-            do
-            {
-                vTaskDelay(1000 / portTICK_PERIOD_MS);
-                expected_size = HEADER_LENGTH + SENSOR_RESPONSE_LENGTH;
-                if (!BG96_RecvTCP(sensor_response, &expected_size))
-                {
-                    ret = SDU_closeConnection(comm_params);
-                    if (ret != SDU_OK)
-                        return ret;
-                    return BG96_ERROR;
-                }
-                num_of_attempts--;
-            } while(expected_size == 0 && num_of_attempts != 0);
-        }
-        else if (comm_params->type_of_protocol == MQTT && comm_params->type_of_tunnel == BG96)
-        {
-            uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
-            do
-            {
-                vTaskDelay(1000 / portTICK_PERIOD_MS);
-                expected_size = HEADER_LENGTH + SENSOR_RESPONSE_LENGTH;
-                BG96_MQTTcollectData(sensor_response, &expected_size);
-                num_of_attempts--;
-            } while(expected_size == 0 && num_of_attempts != 0);
-        }
-        else if (comm_params->type_of_protocol == UDP && comm_params->type_of_tunnel == WIFI)
-        {
-            WiFi_UDPrecv((char *)sensor_response, &expected_size);
-        }
-        else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == WIFI)
-        {
-            WiFi_TCPrecv((char *)sensor_response, &expected_size);
-        }
-        else if (comm_params->type_of_protocol == MQTT && comm_params->type_of_tunnel == WIFI)
-        {
-            WiFi_MQTTrecv(sensor_response, &expected_size);
-        }
+        ret = SDU_receiveProc(comm_params, sensor_response, expected_size);
+
+        if (ret != SDU_OK)
+            return ret;
 
         sensor_response_length = expected_size;
         ret = SDU_parsePacket(sensor_response, sensor_response_length, sensor_response_raw, &sensor_response_raw_length);
@@ -1504,4 +1210,383 @@ uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_da
     {
         return BAD_COMM_STRUCTURE;
     }
+}
+
+
+uint8_t SDU_fotaGetInfo(SDU_struct *comm_params, FOTA_Info_struct *info_s)
+{
+    // send info request
+    uint8_t ret;
+    uint16_t expected_size = 0;
+
+    if (comm_params -> mode_of_work == ENCRYPTED_COMM)
+    {
+        uint8_t iv[16];
+        mbedtls_aes_context aes;
+
+        ret = SDU_genIV(iv);
+        if (ret != 0)
+            return ret;
+
+        uint8_t info_request[256];
+        uint16_t info_request_len;
+
+        Serial.println("sdu test0");
+
+        ret = SDU_establishConnection(comm_params);
+        if (ret != SDU_OK)
+            return ret;
+
+        Serial.println("sdu test1");
+
+        ret = SDU_constructPacket(comm_params->device_mac, FOTA_INFO_REQUEST_HEADER, NULL, 0, info_request, &info_request_len);
+
+        if (ret != 0)
+        {
+            uint8_t ret1 = SDU_closeConnection(comm_params);
+            if (ret1 != SDU_OK)
+                return ret1;
+            return ret;
+        }
+
+        if (SDU_debug_enable)
+        {
+            SDU_debugPrint((int8_t *)"Info request", info_request, info_request_len);
+        }
+
+        ret = SDU_sendProc(comm_params, info_request, info_request_len);
+
+        if (ret != SDU_OK)
+            return ret;
+
+        uint8_t info_response[64];
+        uint16_t info_response_length;
+        uint8_t info_response_raw[32];
+        uint8_t info[32];
+        uint16_t info_response_raw_length;
+
+        expected_size = HEADER_LENGTH + INFO_RESPONSE_LEN + CRC8_LENGTH;
+
+        ret = SDU_receiveProc(comm_params, info_response, expected_size);
+
+        Serial.println("sdu test2");
+
+        if (ret != SDU_OK)
+            return ret;
+
+        if (SDU_debug_enable)
+            SDU_debugPrint((int8_t *)"Info response", info_response, expected_size);
+
+        info_response_length = expected_size;
+
+        ret = SDU_parsePacket(info_response, info_response_length, info_response_raw, &info_response_raw_length);
+
+        if (ret != SDU_OK)
+        {
+            uint8_t ret1 = SDU_closeConnection(comm_params);
+            if (ret1 != SDU_OK)
+                return ret1;
+            return ret;
+        }
+
+        if (info_response_raw_length != INFO_RESPONSE_LEN)
+        {
+            ret = SDU_closeConnection(comm_params);
+            if (ret != SDU_OK)
+                return ret;
+            return SERVER_ERROR(INVALID_NUM_OF_BYTES);
+        }
+        
+        if (SDU_debug_enable)
+        {
+            SDU_debugPrint((int8_t *)"Info response raw", info_response_raw, info_response_raw_length);
+        }
+
+        ret = SDU_closeConnection(comm_params);
+        if (ret != SDU_OK)
+            return ret;
+
+        if (!Crypto_AES(&aes, DECRYPT, session_key, 256, iv, info_response_raw, info, INFO_RESPONSE_LEN))
+            return CRYPTO_FUNC_ERROR;
+
+        ret = SDU_parseFotaInfo(info, info_s);
+
+        if (ret != SDU_OK)
+            return ret;
+
+        SDU_debugPrint((int8_t *)"Code version", info_s->code_version, CODE_VERSION_LEN);
+        SDU_debugPrint((int8_t *)"Code start addr", info_s->code_start_address, CODE_START_ADDRESS_LEN);
+        SDU_debugPrint((int8_t *)"Code length", info_s->code_length, CODE_LENGTH_LEN);
+        SDU_debugPrint((int8_t *)"Code crc", &info_s->code_crc, CODE_CRC_LEN);
+
+        return SDU_OK;
+
+    }
+    else
+    {
+        return BAD_COMM_STRUCTURE;
+    }
+}
+
+uint8_t SDU_fotaGetCode(SDU_struct *comm_params, uint8_t address[4], uint8_t num_of_bytes[4], uint8_t *code, uint16_t *code_len)
+{
+    // send info request
+    uint8_t ret;
+    uint16_t expected_size = 0;
+
+    if (comm_params -> mode_of_work == ENCRYPTED_COMM)
+    {
+        uint8_t iv[16];
+        mbedtls_aes_context aes;
+
+        ret = SDU_genIV(iv);
+        if (ret != 0)
+            return ret;
+
+        uint8_t code_request[256];
+        uint8_t code_request_raw[128];
+        uint8_t enc_code_request_raw[128];
+        uint16_t code_request_len = 16;
+
+        ret = SDU_establishConnection(comm_params);
+        if (ret != SDU_OK)
+            return ret;
+
+        memcpy(code_request_raw, address, 4);
+        memcpy(code_request_raw + 4, num_of_bytes, 4);
+
+        if (!Crypto_AES(&aes, ENCRYPT, session_key, 256, iv, code_request_raw, enc_code_request_raw, code_request_len))
+            return CRYPTO_FUNC_ERROR;
+
+        // pad data to 16 or 32
+        //code_request_len += 16 - code_request_len % 16;
+
+        ret = SDU_constructPacket(comm_params->device_mac, FOTA_CODE_REQUEST_HEADER, enc_code_request_raw, code_request_len, code_request, &code_request_len);
+
+        if (ret != 0)
+        {
+            uint8_t ret1 = SDU_closeConnection(comm_params);
+            if (ret1 != SDU_OK)
+                return ret1;
+            return ret;
+        }
+
+        if (SDU_debug_enable)
+        {
+            SDU_debugPrint((int8_t *)"Code request", code_request, code_request_len);
+        }
+
+        ret = SDU_sendProc(comm_params, code_request, code_request_len);
+
+        if (ret != SDU_OK)
+            return ret;
+
+        uint8_t code_response[1096];
+        uint16_t code_response_length;
+        uint8_t code_response_raw[1024];
+        uint16_t code_response_raw_length;
+
+        uint32_t num_of_bytes_var = (num_of_bytes[3] << 24) | (num_of_bytes[2] << 16) | (num_of_bytes[1] << 8) | (num_of_bytes[0]);
+
+        if (num_of_bytes_var % 16 == 0)
+            expected_size = HEADER_LENGTH + num_of_bytes_var + CRC8_LENGTH;
+        else
+            expected_size = HEADER_LENGTH + num_of_bytes_var + 16 - (num_of_bytes_var % 16)  + CRC8_LENGTH;
+
+        //Serial.println("before rec proc");
+
+        ret = SDU_receiveProc(comm_params, code_response, expected_size);
+
+
+        //Serial.println("responded " + String(ret));
+
+        if (ret != SDU_OK)
+            return ret;
+
+        //if (SDU_debug_enable)
+            //SDU_debugPrint((int8_t *)"Code response", code_response, expected_size);
+
+        code_response_length = expected_size;
+
+        ret = SDU_parsePacket(code_response, code_response_length, code_response_raw, &code_response_raw_length);
+        
+        if (ret != 0)
+        {
+            uint8_t ret1 = SDU_closeConnection(comm_params);
+            if (ret1 != SDU_OK)
+                return ret1;
+            return ret;
+        }
+
+        if (code_response_raw_length != expected_size - HEADER_LENGTH - CRC8_LENGTH)
+        {
+            ret = SDU_closeConnection(comm_params);
+            if (ret != SDU_OK)
+                return ret;
+            return SERVER_ERROR(INVALID_NUM_OF_BYTES);
+        }
+        
+        if (SDU_debug_enable)
+        {
+            SDU_debugPrint((int8_t *)"Code response raw", code_response_raw, code_response_raw_length);
+        }
+
+        ret = SDU_closeConnection(comm_params);
+        if (ret != SDU_OK)
+            return ret;
+
+        *code_len = code_response_raw_length;
+
+        ret = SDU_genIV(iv);
+        if (ret != 0)
+            return ret;
+
+        if (!Crypto_AES(&aes, DECRYPT, session_key, 256, iv, code_response_raw, code, code_response_raw_length))
+            return CRYPTO_FUNC_ERROR;
+
+        return SDU_OK;
+    }
+    else
+    {
+        return BAD_COMM_STRUCTURE;
+    }
+
+}
+
+
+uint8_t SDU_parseFotaInfo(uint8_t *info, FOTA_Info_struct *info_s)
+{
+    memcpy(info_s->code_version, info, CODE_VERSION_LEN);
+    memcpy(info_s->code_start_address, info + CODE_VERSION_LEN, CODE_START_ADDRESS_LEN);
+    memcpy(info_s->code_length, info + CODE_VERSION_LEN + CODE_START_ADDRESS_LEN, CODE_LENGTH_LEN);
+    memcpy(&info_s->code_crc, info + CODE_VERSION_LEN + CODE_START_ADDRESS_LEN + CODE_LENGTH_LEN, CODE_CRC_LEN);
+    return SDU_OK;
+}
+
+uint8_t SDU_receiveProc(SDU_struct *comm_params, uint8_t *response_data, uint16_t expected_len)
+{
+    uint8_t ret;
+    uint16_t expected_size = expected_len;
+
+    if (comm_params->type_of_protocol == UDP && comm_params->type_of_tunnel == BG96)
+    {
+        uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
+        do
+        {
+            delay(1000);
+            expected_size = expected_len;
+            if (!BG96_RecvUDP(response_data, &expected_size))
+            {
+                ret = SDU_closeConnection(comm_params);
+                if (ret != SDU_OK)
+                    return ret;
+                return BG96_ERROR;
+            }
+            num_of_attempts--;
+        } while(expected_size == 0 && num_of_attempts != 0);
+    }
+    else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == BG96)
+    {
+        uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
+        do
+        {
+            delay(1000);
+            expected_size = expected_len;
+            if (!BG96_RecvTCP(response_data, &expected_size))
+            {
+                ret = SDU_closeConnection(comm_params);
+                if (ret != SDU_OK)
+                    return ret;
+                return BG96_ERROR;
+            }
+            num_of_attempts--;
+        } while(expected_size == 0 && num_of_attempts != 0);
+    }
+    else if (comm_params->type_of_protocol == MQTT && comm_params->type_of_tunnel == BG96)
+    {
+        uint8_t num_of_attempts = NUM_OF_ATTEMPTS_ON_RECEIVE;
+        do
+        {
+            delay(1000);
+            expected_size = expected_len;
+            BG96_MQTTcollectData(response_data, &expected_size);
+            num_of_attempts--;
+        } while(expected_size == 0 && num_of_attempts != 0);
+    }
+    else if (comm_params->type_of_protocol == UDP && comm_params->type_of_tunnel == WIFI)
+    {
+        WiFi_UDPrecv((char *)response_data, &expected_size);
+    }
+    else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == WIFI)
+    {
+        WiFi_TCPrecv((char *)response_data, &expected_size);
+    }
+    else if (comm_params->type_of_protocol == MQTT && comm_params->type_of_tunnel == WIFI)
+    {
+        WiFi_MQTTrecv(response_data, &expected_size);
+    }
+    else
+    {
+        return BAD_COMM_STRUCTURE;
+    }
+
+    return SDU_OK;
+}
+
+
+uint8_t SDU_sendProc(SDU_struct *comm_params, uint8_t *data, uint16_t data_len)
+{
+    uint8_t ret;
+
+    if (comm_params->type_of_protocol == UDP && comm_params->type_of_tunnel == BG96)
+    {
+        if (!BG96_SendUDP(comm_params->server_IP, comm_params->port, data, data_len))
+        {
+            ret = SDU_closeConnection(comm_params);
+            if (ret != SDU_OK)
+                return ret;
+            return BG96_ERROR;
+        }
+    }
+    else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == BG96)
+    {
+        if (!BG96_SendTCP(data, data_len))
+        {
+            ret = SDU_closeConnection(comm_params);
+            if (ret != SDU_OK)
+                return ret;
+            return BG96_ERROR;
+        }
+    }
+    else if (comm_params->type_of_protocol == MQTT && comm_params->type_of_tunnel == BG96)
+    {
+        if (!BG96_MQTTpublish(comm_params->topic_to_pub, data, data_len))
+        {
+            ret = SDU_closeConnection(comm_params);
+            if (ret != SDU_OK)
+                return ret;
+            return BG96_ERROR;
+        }
+    }
+    else if (comm_params->type_of_protocol == UDP && comm_params->type_of_tunnel == WIFI)
+    {
+        if (!WiFi_UDPsend(comm_params->server_IP, comm_params->port, data, data_len))
+            return WIFI_ERROR;
+    }
+    else if (comm_params->type_of_protocol == TCP && comm_params->type_of_tunnel == WIFI)
+    {
+        if (!WiFi_TCPsend(data, data_len))
+            return WIFI_ERROR;
+    }
+    else if (comm_params->type_of_protocol == MQTT && comm_params->type_of_tunnel == WIFI)
+    {
+        if (!WiFi_MQTTsend(comm_params->topic_to_pub, data, data_len))
+            return WIFI_ERROR;
+    }
+    else
+    {
+        return BAD_COMM_STRUCTURE;
+    }
+
+    return SDU_OK;
 }

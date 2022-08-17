@@ -49,6 +49,21 @@ typedef struct
     char *BLE_password; // password for ble communication
 } SDU_struct;
 
+
+#define CODE_VERSION_LEN 7
+#define CODE_START_ADDRESS_LEN 4
+#define CODE_LENGTH_LEN 4
+#define CODE_CRC_LEN 1
+
+typedef struct
+{
+    uint8_t code_version[7];
+    uint8_t code_start_address[4];
+    uint8_t code_length[4];
+    uint8_t code_crc;
+} FOTA_Info_struct;
+
+
 /// CRC polynomial value definition
 #define CRC8_DEFAULT_VALUE           0x07
 
@@ -58,6 +73,8 @@ typedef struct
 #define CLIENT_VERIFY_HEADER        0x4356
 #define SENSOR_ENC_DATA_HEADER      0x5345
 #define SENSOR_DATA_HEADER          0x5350
+#define FOTA_INFO_REQUEST_HEADER    0xF152
+#define FOTA_CODE_REQUEST_HEADER    0xFC52
 
 // server headers
 #define DATE_UPDATE_HEADER          0x5455
@@ -65,6 +82,8 @@ typedef struct
 #define SERVER_VERIFY_HEADER        0x5356
 #define ERROR_CODE_HEADER           0x4552
 #define SENSOR_RESPONSE_HEADER      0x5352
+#define FOTA_INFO_RESPONSE_HEADER   0xF144
+#define FOTA_CODE_RESPONSE_HEADER   0xFC44
 
 /// error packets (sent by server)
 #define S_PACKET_OK                   0x00
@@ -112,6 +131,8 @@ typedef struct
 #define DATE_UPDATE_LEN         16
 #define ERROR_CODE_LENGTH       1
 #define SENSOR_RESPONSE_LENGTH  1
+#define INFO_RESPONSE_LEN       16
+#define CODE_RESPONSE_LEN       16
 
 // offsets
 #define PUBLIC_KEY_OFFSET       64
@@ -180,6 +201,20 @@ uint8_t SDU_updateIV(SDU_struct *comm_params);
 uint8_t SDU_getDay(int16_t *day);
 
 /**
+ * Function that returns hour value of RTC
+ * @param hay - pointer to variable that stores hour number
+ * @return - error code
+ */
+uint8_t SDU_getHour(int16_t *hour);
+
+/**
+ * Function that returns minute value of RTC
+ * @param hay - pointer to variable that stores minute number
+ * @return - error code
+ */
+uint8_t SDU_getMinute(int16_t *minute);
+
+/**
 * Function used to perform handshake in case of encrypted communication. It uses DH-EKE (Diffie-Hellman encrypted key exchange) scheme and stores shared secret in internal data buffer.
 * @param comm_params - pointer to communication structure
 * @return - error code
@@ -193,6 +228,13 @@ uint8_t SDU_handshake(SDU_struct *comm_params);
 * @return - error code
 */
 uint8_t SDU_sendData(SDU_struct *comm_params, uint8_t *raw_data, uint16_t raw_data_len);
+
+
+uint8_t SDU_fotaGetInfo(SDU_struct *comm_params, FOTA_Info_struct *info_s);
+
+uint8_t SDU_fotaGetCode(SDU_struct *comm_params, uint8_t address[4], uint8_t num_of_bytes[4], uint8_t *code, uint16_t *code_len);
+
+
 /**
 * Function used set MQTT parameters in communication. Should be used after SDU_init() function and before SDU_updateIV(), SDU_handshake() and SDU_sendData() functions in case of encrypted communication.
 * @param comm_params - pointer to communication structure that will be used
@@ -262,6 +304,11 @@ uint8_t SDU_parsePacket(uint8_t *input, uint16_t input_length, uint8_t *output, 
 * @return - error code
 */
 uint8_t SDU_genIV(uint8_t *iv);
+
+uint8_t SDU_parseFotaInfo(uint8_t *info, FOTA_Info_struct *info_s);
+
+uint8_t SDU_receiveProc(SDU_struct *comm_params, uint8_t *response_data, uint16_t expected_len);
+uint8_t SDU_sendProc(SDU_struct *comm_params, uint8_t *data, uint16_t data_len);
 
 #endif // _SDU_H
 

@@ -14,6 +14,8 @@
  **/
 bool BLE_serverSetup(char *serv_uuid, char *char_uuid);
 
+bool BLE_serverStop();
+
 /**
  * Function that checks if there is new data recieved via BLE
  * @return Returns true if there is new data recieved via BLE

@@ -39,9 +39,9 @@ bool WiFi_setup(const char* ssid, const char* pass)
   {
     if (WIFI_debug_enable)
       Serial.print('.');
-    RGB_LED_setColor(CYAN);
+    //RGB_LED_setColor(CYAN);
     delay(100);
-    RGB_LED_setColor(BLACK);
+    //RGB_LED_setColor(BLACK);
     if (--num_of_attempts == 0)
       break;
   } while (!(wifiMulti.run() == WL_CONNECTED));
@@ -53,7 +53,7 @@ bool WiFi_setup(const char* ssid, const char* pass)
   {
     Serial.println(" OK!");
     Serial.print("IP address: "); 
-    RGB_LED_setColor(CYAN);
+    //RGB_LED_setColor(CYAN);
   }
 
   // Print ESP32 Local IP Address
@@ -61,7 +61,7 @@ bool WiFi_setup(const char* ssid, const char* pass)
   {
     Serial.println(WiFi.localIP());
     delay(1000);
-    RGB_LED_setColor(BLACK);
+    //RGB_LED_setColor(BLACK);
   }
   
   return true;
@@ -119,20 +119,26 @@ bool WiFi_UDPsend(const char* ip, uint16_t port, uint8_t udp_packet[], uint16_t 
 bool WiFi_UDPrecv(char rx_buffer[], uint16_t *size)
 {
   uint32_t t0 = millis();
+
   while(!udp.available() && (millis() - t0 < 5000))
+  //{
     udp.parsePacket();
+  //  vTaskDelay(50 / portTICK_PERIOD_MS);
+  //}
   
   if (*size > udp.available())
     *size = udp.available();
+  
   udp.read(rx_buffer, *size);
   rx_buffer[*size] = '\0';
-  
+
   if (WIFI_debug_enable)
   {
     Serial.print("RX -> ");
     Serial.println(rx_buffer);
   }
 
+  //udp.flush();
   return true;
 }
 

@@ -147,6 +147,19 @@ uint8_t LDU_init(LDU_struct *comm_params)
     return LDU_OK;
 }
 
+uint8_t LDU_deinit(LDU_struct *comm_params)
+{
+    if (comm_params->mode == BLE)
+    {
+        BLE_serverStop();
+    }
+    else
+    {
+        return BAD_COM_STRUCTURE;
+    }
+
+    return LDU_OK;
+}
 
 uint8_t LDU_send(LDU_struct *comm_params, uint8_t packet[], uint16_t size)
 {
@@ -171,7 +184,14 @@ uint8_t LDU_send(LDU_struct *comm_params, uint8_t packet[], uint16_t size)
 
 uint8_t LDU_getServerMac(LDU_struct *comm_params, uint8_t *server_mac)
 {
-    if (comm_params->mode == BLE)
+    server_mac[0] = 0x84;
+    server_mac[1] = 0xcc;
+    server_mac[2] = 0xa8;
+    server_mac[3] = 0x7a;
+    server_mac[4] = 0x39;
+    server_mac[5] = 0x2e;
+
+    /*if (comm_params->mode == BLE)
     {
         BLE_getMACStandalone(server_mac);
     }
@@ -182,7 +202,7 @@ uint8_t LDU_getServerMac(LDU_struct *comm_params, uint8_t *server_mac)
     else
     {
         return BAD_COM_STRUCTURE;
-    }
+    }*/
 }
 
 uint8_t LDU_calculateDeviceHash(LDU_struct *comm_params, uint8_t *output)

@@ -107,6 +107,13 @@ void LDU_setRS485Params(LDU_struct *comm_params, uint32_t rs485_baudrate);
 uint8_t LDU_init(LDU_struct *comm_params);
 
 /**
+ * Function that closes local communication channel
+ * @param comm_params - Configuration structure for local communication
+ * @return No return value
+ */
+uint8_t LDU_deinit(LDU_struct *comm_params);
+
+/**
  * Function that sends data via local communication channel
  * @param comm_params - Configuration structure for local communication
  * @param packet - Buffer that contains data to be sent

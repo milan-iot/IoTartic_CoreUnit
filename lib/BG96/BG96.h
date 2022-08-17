@@ -60,7 +60,7 @@ bool BG96_OpenSocketUDP();
  * @param len - Number of bytes to be sent
  * @return Returns true on success
  */
-bool BG96_SendUDP(char server_IP[], uint16_t port, uint8_t payload[], uint8_t len);
+bool BG96_SendUDP(char server_IP[], uint16_t port, uint8_t payload[], uint16_t len);
 
 /**
  * Function that reads recieved data via UDP

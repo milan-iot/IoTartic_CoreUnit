@@ -97,30 +97,43 @@ bool Crypto_AES(mbedtls_aes_context *ctx, ENCRYPTION_DIRECTION_TYPE ed_type, uin
     uint16_t padding = 16 - length % 16;
 
     // prepraviti padding
-    uint8_t tmp[128];
-    memset(tmp, 0x00, 128);
+    /*uint8_t tmp[1096];
+    memset(tmp, 0x00, 1096);
     memcpy(tmp, input, length);
+    */
+    if (crypto_debug_enable)
+      Crypto_debugPrint((int8_t *)"aes input", input, length);
 
     if (ed_type == ENCRYPT)
     {
       if (mbedtls_aes_setkey_enc(ctx, (const unsigned char*) key, key_len) != 0)
+      {
+        mbedtls_aes_free(ctx);
         return false;
+      }
       
-      if (mbedtls_aes_crypt_cbc(ctx, (int)MBEDTLS_AES_ENCRYPT, length + padding, iv, tmp, output) != 0)
+      if (mbedtls_aes_crypt_cbc(ctx, (int)MBEDTLS_AES_ENCRYPT, length + padding, iv, input, output) != 0)
+      {
+        mbedtls_aes_free(ctx);
         return false;
+      }
     }
     else if (ed_type == DECRYPT)
     {
       if (mbedtls_aes_setkey_dec(ctx, (const unsigned char*) key, key_len) != 0)
+      {
+        mbedtls_aes_free(ctx);
         return false;
-      
-      if (mbedtls_aes_crypt_cbc(ctx, (int)MBEDTLS_AES_DECRYPT, length + padding, iv, tmp, output) != 0)
+      }
+      if (mbedtls_aes_crypt_cbc(ctx, (int)MBEDTLS_AES_DECRYPT, length + padding, iv, input, output) != 0)
         return false;
     }
     else
     {
+      mbedtls_aes_free(ctx);
       return false;
     }
+
     mbedtls_aes_free(ctx);
 
     if (crypto_debug_enable)

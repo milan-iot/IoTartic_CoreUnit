@@ -3,12 +3,18 @@
 
 //BG96 UART pins
 #define U2RXD 16
+//#define U2RXD 2
+//#define U2RXD 15
 #define U2TXD 17
+//#define U2TXD 4
+//#define U2TXD 14
 
 #define NBIOT_STREAM  Serial2
 #define DEBUG_STREAM  Serial
 
 #define BG96_PWRKEY 27
+//#define BG96_PWRKEY 33
+//#define BG96_PWRKEY 13
 
 char ca_cert[] = "-----BEGIN CERTIFICATE-----\r\n"\
 "MIIDSzCCAjOgAwIBAgIUS7akZ7vdcx8zSTauu1LYPMuXGscwDQYJKoZIhvcNAQEL\r\n"\
@@ -44,7 +50,7 @@ void BG96_debugEnable(bool enable)
 
 bool getBG96response(char command[], char exp_response[], char response[], uint32_t timeout)
 {
-  uint8_t count = 0;
+  uint16_t count = 0;
   bool resp_OK = false;
 
   response[0] = '\0';
@@ -293,7 +299,7 @@ bool BG96_OpenSocketUDP()
   return true;
 }
 
-bool BG96_SendUDP(char server_IP[], uint16_t port, uint8_t payload[], uint8_t len)
+bool BG96_SendUDP(char server_IP[], uint16_t port, uint8_t payload[], uint16_t len)
 {
     char cmd[128], response[128];
 
@@ -314,17 +320,19 @@ bool BG96_SendUDP(char server_IP[], uint16_t port, uint8_t payload[], uint8_t le
 bool BG96_RecvUDP(uint8_t *output, uint16_t *output_len)
 {
   uint16_t start_index = 0, cnt = 0;
-  char response[256];
+  char response[1200];
 
   if (!getBG96response("AT+QIRD=2\r\n", "OK", response, 5000))
     return false;
+
+  //DEBUG_STREAM.println("before qird");
 
   char exp_response[] = "+QIRD:";
   uint8_t flag;
   while(1)
   {
     flag = 1;
-    for(uint8_t i = 0; i < strlen(exp_response); i++)
+    for(uint16_t i = 0; i < strlen(exp_response); i++)
     {
       if(response[start_index + i] != exp_response[i])
       {
@@ -337,6 +345,8 @@ bool BG96_RecvUDP(uint8_t *output, uint16_t *output_len)
     start_index++;
   }
   
+  //DEBUG_STREAM.println("before search for size");
+
   uint16_t actual_size = 0;
   while (response[start_index] != ',')
   {
@@ -347,6 +357,8 @@ bool BG96_RecvUDP(uint8_t *output, uint16_t *output_len)
       }
       start_index++;
   }
+
+  //DEBUG_STREAM.println("before index increment");
 
   while(response[start_index] != 0x0a)
   {
@@ -366,6 +378,8 @@ bool BG96_RecvUDP(uint8_t *output, uint16_t *output_len)
   {
     memcpy(output, response + start_index, *output_len);
   }
+
+  //DEBUG_STREAM.println("end rec");
 
   return true;
 }

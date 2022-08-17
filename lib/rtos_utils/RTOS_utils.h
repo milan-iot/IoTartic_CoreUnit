@@ -5,6 +5,7 @@
 #include <RGB_LED.h>
 #include <json.h>
 #include <sdu.h>
+#include <FOTA.h>
 
 typedef enum {CORE_SERVER, CORE_SENSOR, CORE_ACTUATOR} TASK_TYPE;
 
@@ -17,6 +18,7 @@ typedef enum {CORE_SERVER, CORE_SENSOR, CORE_ACTUATOR} TASK_TYPE;
 /// error codes
 #define RTOS_OK           0x00
 #define RTOS_BAD_TYPE     0xB0
+#define RTOS_SEM_ERROR    0x01
 
 /// communication structures
 typedef struct serverCommunicationTaskParams_s {
@@ -70,6 +72,10 @@ void RTOS_init();
  * @param priority - task priority (1,2,3...)
  * @return Error code
  */
-uint8_t RTOS_createTask(TASK_TYPE type, void *params, int16_t stack_size, int8_t priority);
+uint8_t RTOS_createTask(TASK_TYPE type, void *params, uint32_t stack_size, int8_t priority);
+
+uint8_t RTOS_takeSem();
+
+void RTOS_deinit();
 
 #endif
